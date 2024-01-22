@@ -458,6 +458,173 @@ flight_3.groupBy('DistanceGroup').count().orderBy('count', ascending=False).show
 
 
 
+The data is being prepared for classification models and as such we will require a binary categorical feature. THe goal of this analysis is to predict which flights will be late. AS stated in the data dictionary, arriuval delays are those flights which arrive 15 minutes or more past the CRS schedule arrival time. The new categorcial feature will be codes as "0"-arrived on time, and "1"-arrived late.
+
+
+
+
+
+
+```{python}
+
+flight_3=flight_3.withColumn('ArrDel15',
+when((col('ARR_DELAY') <= 14),'0')
+.otherwise('1'))
+
+
+
+
+
+```
+
+
+
+
+```{python}
+
+
+flight_3.groupBy('ArrDel15').count().orderBy('count', ascending=False).show(truncate=False)
+
+
+```
+
+
+
+For purposes on data exploation we will perform the same process for depature delays. Flights departing less than 15 minutes late will be codes as "0"-no, and flights departing 15 minutes late or more will be coded as "1"-yes.
+
+
+
+
+
+```{python}
+
+
+flight_3=flight_3.withColumn('DepDel15',
+when((col('DEP_DELAY') <= 14),'0')
+.otherwise('1'))
+
+
+```
+
+
+
+```{python}
+
+
+flight_3.groupBy('DepDel15').count().orderBy('count', ascending=False).show(truncate=False)
+
+
+```
+
+
+A temporary SQL table will used to help create two new numerical features.
+
+
+
+
+
+
+```{python}
+
+
+# Register the DataFrame as a temporary SQL table
+flight_3.createOrReplaceTempView("time_table")
+
+
+```
+
+
+
+```{python}
+
+
+# Define a SQL query to calculate the time difference in minutes
+sql_query = """
+    SELECT
+           idx,
+           WHEELS_OFF,
+           WHEELS_ON,
+           CRS_DEP_TIME,
+           CRS_ARR_TIME,
+           ABS(CAST(SUBSTRING(lpad(CRS_DEP_TIME, 4, '0'), 1, 2) AS INT) * 60 + CAST(SUBSTRING(lpad(CRS_DEP_TIME, 4, '0'), 3, 2) AS INT) -
+               (CAST(SUBSTRING(lpad(WHEELS_OFF, 4, '0'), 1, 2) AS INT) * 60 + CAST(SUBSTRING(lpad(WHEELS_OFF, 4, '0'), 3, 2) AS INT))) AS schDepWhOffDiff,
+            ABS(CAST(SUBSTRING(lpad(CRS_ARR_TIME, 4, '0'), 1, 2) AS INT) * 60 + CAST(SUBSTRING(lpad(CRS_ARR_TIME, 4, '0'), 3, 2) AS INT) -
+               (CAST(SUBSTRING(lpad(WHEELS_ON, 4, '0'), 1, 2) AS INT) * 60 + CAST(SUBSTRING(lpad(WHEELS_ON, 4, '0'), 3, 2) AS INT))) AS wheOnScArrDiff   
+    FROM time_table
+"""
+
+# Execute the SQL query
+result_df = spark.sql(sql_query)
+
+
+
+```
+
+
+```{python}
+
+
+
+result_df.select('schDepWhOffDiff','wheOnScArrDiff').show(5)
+
+
+
+```
+
+
+
+
+```{python}
+
+
+
+result_df.printSchema()
+
+
+```
+
+
+
+
+Coliumns will be dropped from the result_df data frame as it will be merged with the flight_3 data frame and these columns will be duplicates.
+
+
+```{Rcpp}
+
+
+result_df=result_df.drop('WHEELS_OFF','CRS_DEP_TIME','CRS_ARR_TIME','WHEELS_ON')
+
+
+```
+
+
+
+```{python}
+
+
+result_df.printSchema()
+
+
+
+```
+
+
+
+
+We will now join the flights data frame with the sql query result data frame. The idx will be dropped from fligjht_3 to prevent duplicate colums.
+
+
+```{python}
+
+
+
+
+
+
+```
+
+
+
 
 
 
