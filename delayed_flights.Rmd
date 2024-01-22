@@ -1,0 +1,463 @@
+---
+title: "Delayed Flight Arrivals"
+author: "Frank Laudert"
+date: "2024-01-22"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(include = FALSE)
+```
+
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+
+
+
+
+
+
+
+
+Data Dictionary
+
+CRS-Computer Reservation System ArrDel15-Arrival Delay Indicator, flight arrived 15 Minutes or More past CRS Sheduled Arrival. (0=No, 1=Yes)
+
+DepDel15-Departure Delay Indicator, flight depaerted 15 Minutes or More past CRS scheduled departure time. (0=No, 1=Yes)
+
+OP_CARRIER-Airline carrier code
+
+ORIGIN-Airport flight departed.
+
+CRS_DEP_TIME- Departure Time scheduled by CRS.
+
+DEP_TIME-Actual Departure Time (local time: hhmm) It's important to note that the departure time is the moment a plane pushes back from the gate, not the time it takes off.
+
+DEP_DELAY-Difference in minutes between scheduled and actual departure time. Early departures show negative numbers.
+
+WHEELS_OF-Actual Take-Off Time
+
+WHEELS_On-Actual landing Time
+
+TAXI_OUT-The time elapsed between departure from the origin airport gate and wheels off, in minutes.
+
+TAXI_IN-Taxi time from wheels down to arrival at the gate, in minutes.
+
+CRS_ARR_TIME-Arrival time as scheduled in CRS.
+
+ARR_TIME-Actual Arrival Time (local time: hhmm)
+
+ARR_DELAY-Difference in minutes between scheduled and actual arrival time. Early arrivals show negative numbers.
+
+CANCELLED-Flight Canceled. Indicator (0=No,1=Yes)
+
+DIVERTED-Flight landed at different airport than origianl scheduled airport.
+
+CRS_ELAPSED_TIME-Expected elapsed Time of Flight per CRS, in Minutes
+
+CTUAL_ELAPSED_TIME-Actual Elapsed Time of flight, in Minutes.
+
+AIR_TIME-Flight Time, in Minutes
+
+DISTANCE-Distance between airports (miles)
+
+CARRIER_DELAY-Carrier Delay, in Minutes. Carrier delay is within the control of the air carrier. Examples of occurrences that may determine carrier delay are: aircraft cleaning, aircraft damage, awaiting the arrival of connecting passengers or crew, baggage, bird strike, cargo loading, catering, computer, outage-carrier equipment, crew legality (pilot or attendant rest), damage by hazardous goods, engineering inspection, fueling, handling disabled passengers, late crew, lavatory servicing, maintenance, oversales, potable water servicing, removal of unruly passenger, slow boarding or seating, stowing carry-on baggage, weight and balance delays.
+
+WEATHER_DELAY-Weather Delay, in Minutes. Weather delay is caused by extreme or hazardous weather conditions that are forecasted or manifest themselves on point of departure, enroute, or on point of arrival.
+
+NAS_DELAY-National Air System Delay, in Minutes.Delay that is within the control of the National Airspace System (NAS) may include: non-extreme weather conditions, airport operations, heavy traffic volume, air traffic control, etc. Delays that occur after Actual Gate Out are usually attributed to the NAS and are also reported through OPSNET.
+
+SECURITY_DELAY-Security Delay, in Minutes. Security delay is caused by evacuation of a terminal or concourse, re-boarding of aircraft because of security breach, inoperative screening equipment and/or long lines in excess of 29 minutes at screening areas.
+
+LATE_AIRCRAFT_DELAY-Late Aircraft Delay, in Minutes. Arrival delay at an airport due to the late arrival of the same aircraft at a previous airport. The ripple effect of an earlier delay at downstream airports is referred to as delay propagation.
+
+schDepWhOffDiff-Difference between scheduled departure time and wheels up.
+
+wheOnScArrDiff-Difference between wheels down and scheduled arrival time.
+
+DayOfWeek-1 (Monday) - 7 (Sunday)
+
+DayOfMonth-1-31
+
+Month-1-12
+
+DepartureDelayGroups-Departure Delay intervals, every (15 minutes from <-15 to >180). Negative observations are set to zero.
+
+DepTimeBlk-CRS Departure Time Block, Hourly Intervals
+
+1--001-0559 12:00AM to 5:59AM 2--0600-0659 6:00AM to 6:59AM 3--0700-0759 7:00AM to 7:59AM 4--0800-0859 8:00AM to 8:59AM 5--0900-0959 9:00AM to 9:59AM 6--1000-1059 10:00AM to 10:59AM 7--1100-1159 11:00AM to 11:59AM 8--1200-1259 12:00PM to 12:59PM 9--1300-1359 1:00PM to 1:59PM 10--1400-1459 2:00PM to 2:59PM 11--1500-1559 3:00PM to 3:59PM 12--1600-1659 4:00PM to 4:59PM 13--1700-1759 5:00PM to 5:59PM 14--1800-1859 6:00PM to 6:59PM 15--1900-1959 7:00PM to 7:59PM 16--2000-2059 8:00PM to 8:59PM 17--2100-2159 9:00PM to 9:59PM 18--2200-2259 10:00PM to 10:59PM 19--2300-2359 11:00PM to 11:59PM
+
+DistanceGroup-Distance Intervals, every 250 Miles, for Flight Segment
+
+1--Less Than 250 Miles 2--250-499 Miles 3--500-749 Miles 4--750-999 Miles 5--1000-1249 Miles 6--1250-1499 Miles 7--1500-1749 Miles 8--1750-1999 Miles 9--2000-2249 Miles 10--2250-2499 Miles 11--500 Miles and Greater
+
+
+```{python}
+
+
+
+import pyspark
+from pyspark.sql import SparkSession
+from pyspark.conf import SparkConf
+
+
+
+
+```
+
+
+
+
+
+
+
+
+
+```{python}
+
+
+conf = SparkConf().setAppName("LateArrival_classifier").setMaster("local[2]") .set("spark.executor.memory", "30g")
+
+
+```
+
+
+```{python}
+
+spark = SparkSession.builder.config(conf=conf).getOrCreate()
+
+
+```
+
+
+
+```{python}
+
+
+sc.install_pypi_package("pandas==0.25.1")
+sc.install_pypi_package("matplotlib", "https://pypi.org/simple")
+sc.install_pypi_package("seaborn")
+sc.install_pypi_package("scipy")
+
+
+
+```
+
+
+```{python}
+
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy.stats import chi2_contingency
+
+
+
+```
+
+
+
+
+```{python}
+
+
+
+from pyspark.ml.linalg import Vectors
+
+from pyspark.ml.param import Param, Params
+from pyspark.sql.functions import col, desc
+from pyspark.sql.functions import pandas_udf
+
+
+from pyspark.sql.types import StringType,BooleanType,IntegerType,DoubleType,StructType,StructField,LongType,ShortType
+
+from pyspark.ml.feature import VectorAssembler,MinMaxScaler, StandardScaler
+
+from pyspark.ml import Pipeline
+
+from pyspark.mllib.evaluation import BinaryClassificationMetrics, MulticlassMetrics
+
+from pyspark.mllib.stat import Statistics
+
+from pyspark.ml.feature import StringIndexer,OneHotEncoder
+
+
+from pyspark.ml.classification import LogisticRegression,DecisionTreeClassifier,GBTClassifier,RandomForestClassifier,LinearSVC
+
+
+from pyspark.ml.evaluation import BinaryClassificationEvaluator,MulticlassClassificationEvaluator
+
+
+import pyspark.ml.evaluation as evals
+
+from pyspark.ml.tuning import CrossValidator, ParamGridBuilder,CrossValidatorModel
+
+from pyspark.ml.stat import Correlation
+
+from pyspark.sql.functions import *
+
+from pyspark.sql.window import *
+from pyspark.sql.functions import row_number
+
+import itertools
+
+from pyspark.sql.functions import dayofweek
+
+
+
+
+
+```
+
+
+
+
+```{python}
+
+flight_arr = spark.read.csv('s3://arrival-raw-data/*.csv',
+                         sep=',',
+                         header=True,
+                         inferSchema=True,
+                         nullValue='NA')
+
+
+```
+
+
+
+
+```{python}
+
+
+flight_arr.count()
+
+
+
+```
+
+
+
+```{python}
+
+
+flight_arr.printSchema()
+
+
+
+```
+
+
+
+
+```{python}
+
+
+
+pd.set_option("display.max_rows", None)
+
+
+
+```
+
+
+# Feature Creation
+
+
+
+
+
+We will create an index column for the puropose of merging data frames created for feature creation.
+
+
+
+
+
+
+
+```{python}
+
+window = Window.orderBy(flight_arr.columns)
+
+flight_2 = flight_arr.withColumn("idx", row_number().over(window))
+
+
+```
+
+
+
+
+
+```{python}
+
+
+flight_2.select('idx','FL_DATE').show(5)
+
+
+```
+
+
+
+```{python}
+
+
+flight_2=flight_2.withColumn("elapTimeDIff",col("ACTUAL_ELAPSED_TIME")-col("CRS_ELAPSED_TIME"))  
+
+
+```
+
+
+
+```{python}
+
+
+flight_arr_2.select("elapTimeDIff").show(5)
+
+
+
+```
+
+
+
+We're going to bin the DEP_DELAY numerical feature into groups and creaste a new categorical feature.
+
+
+
+
+```{python}
+
+
+flight_3=flight_2.withColumn('DepartureDelayGroups',
+when((col('DEP_DELAY') <= 14),'0')
+.when((col('DEP_DELAY') > 14) & (col('DEP_DELAY') <=29), '1')
+.when((col('DEP_DELAY') > 29) & (col('DEP_DELAY') <= 44), '2')   
+.when((col('DEP_DELAY') > 44) & (col('DEP_DELAY') <= 59), '3') 
+.when((col('DEP_DELAY') > 59) & (col('DEP_DELAY') <= 74), '4')
+.when((col('DEP_DELAY')> 74) & (col('DEP_DELAY') <= 89), '5')
+.when((col('DEP_DELAY') > 89) & (col('DEP_DELAY') <= 104), '6')
+.when((col('DEP_DELAY') > 104) & (col('DEP_DELAY') <= 119), '7')
+.when((col('DEP_DELAY') > 119) & (col('DEP_DELAY') <= 134), '8')
+.when((col('DEP_DELAY') > 134) & (col('DEP_DELAY') <= 149), '9')
+.when((col('DEP_DELAY') > 149) & (col('DEP_DELAY') <= 164), '10')
+.when((col('DEP_DELAY') > 164) & (col('DEP_DELAY') <= 179), '11')                                   
+.otherwise('12'))
+
+
+
+```
+
+
+
+```{python}
+
+
+flight_3.groupBy('DepartureDelayGroups').count().orderBy('count', ascending=False).show(truncate=False)
+
+
+
+
+```
+
+
+
+The numerical feature CRS_DEP_TIME will be binned into groups as we did with DEP_DELAY.and a new categorical feature will be created.
+
+
+
+```{python}
+
+
+flight_3=flight_3.withColumn('DepTimeBlk',
+when((col('CRS_DEP_TIME') <= 559),'1')
+.when((col('CRS_DEP_TIME') > 559) & (col('CRS_DEP_TIME') <=659), '2')
+.when((col('CRS_DEP_TIME') > 659) & (col('CRS_DEP_TIME') <= 759), '3')   
+.when((col('CRS_DEP_TIME') > 759) & (col('CRS_DEP_TIME') <= 859), '4') 
+.when((col('CRS_DEP_TIME') > 859) & (col('CRS_DEP_TIME') <= 959), '5')
+.when((col('CRS_DEP_TIME') > 959) & (col('CRS_DEP_TIME') <= 1059), '6')
+.when((col('CRS_DEP_TIME') > 1059) & (col('CRS_DEP_TIME') <= 1159), '7')
+.when((col('CRS_DEP_TIME') > 1159) & (col('CRS_DEP_TIME') <= 1259), '8')
+.when((col('CRS_DEP_TIME') > 1259) & (col('CRS_DEP_TIME') <= 1359), '9')
+.when((col('CRS_DEP_TIME') > 1359) & (col('CRS_DEP_TIME') <= 1459), '10')
+.when((col('CRS_DEP_TIME') > 1459) & (col('CRS_DEP_TIME') <= 1559), '11')
+.when((col('CRS_DEP_TIME') > 1559) & (col('CRS_DEP_TIME') <= 1659), '12')
+.when((col('CRS_DEP_TIME') > 1659) & (col('CRS_DEP_TIME') <= 1759), '13')  
+.when((col('CRS_DEP_TIME') > 1759) & (col('CRS_DEP_TIME') <= 1859), '14')  
+.when((col('CRS_DEP_TIME') > 1859) & (col('CRS_DEP_TIME') <= 1959), '15')
+.when((col('CRS_DEP_TIME') > 2000) & (col('CRS_DEP_TIME') <= 2059), '16') 
+.when((col('CRS_DEP_TIME') > 2059) & (col('CRS_DEP_TIME') <= 2159), '17') 
+.when((col('CRS_DEP_TIME') > 2159) & (col('CRS_DEP_TIME') <= 2259), '18')                               
+.otherwise('19'))
+
+
+```
+
+
+
+```{python}
+
+flight_3.select('DepTimeBlk').distinct().count()
+
+
+
+
+```
+
+
+
+```{python}
+
+
+ht_3.groupBy('DepTimeBlk').count().orderBy('count', ascending=False).show(truncate=False)
+
+
+```
+
+
+
+
+
+
+
+AS with DEP_DELAY and CRS_DEP_TIME we will bin the numerical feature DISTANCE into groups and create another new categorical feature.
+
+
+
+```{python}
+
+flight_3=flight_3.withColumn('DistanceGroup',
+when((col('DISTANCE') <= 249),'1')
+.when((col('DISTANCE') > 249) & (col('DISTANCE') <=499), '2')
+.when((col('DISTANCE') > 499) & (col('DISTANCE') <= 749), '3')   
+.when((col('DISTANCE') > 749) & (col('DISTANCE') <= 999), '4') 
+.when((col('DISTANCE') > 999) & (col('DISTANCE') <= 1249), '5')
+.when((col('DISTANCE') > 1249) & (col('DISTANCE') <= 1499), '6')
+.when((col('DISTANCE') > 1499) & (col('DISTANCE') <= 1749), '7')
+.when((col('DISTANCE') > 1749) & (col('DISTANCE') <= 1999), '8')
+.when((col('DISTANCE') > 1999) & (col('DISTANCE') <= 2249), '9')
+.when((col('DISTANCE') > 2249) & (col('DISTANCE') <= 2499), '10')
+.otherwise('11'))
+
+
+
+```
+
+
+
+```{python}
+
+
+flight_3.groupBy('DistanceGroup').count().orderBy('count', ascending=False).show(truncate=False)
+
+
+```
+
+
+
+
+
+
+
+
