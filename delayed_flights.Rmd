@@ -617,6 +617,90 @@ We will now join the flights data frame with the sql query result data frame. Th
 ```{python}
 
 
+flight_4=flight_3.join(result_df,flight_3.idx == result_df.idx,"outer").drop(flight_3.idx)
+
+flight_4.printSchema()
+
+
+
+
+```
+
+
+
+```{python}
+
+
+flight_4.select('FL_DATE').show()
+
+
+```
+
+
+Our next new features will be created from the FL_DATE (flight date) columns.
+
+
+```{python}
+
+
+flight_5 = flight_4.withColumn('DayOfWeek',dayofweek(flight_4.FL_DATE))\
+                    .withColumn('Month',month(flight_4.FL_DATE))\
+                    .withColumn('Year',year(flight_4.FL_DATE))\
+                    .withColumn('DayOfMonth',dayofmonth(flight_4.FL_DATE))
+                    
+                    
+                    
+flight_5.printSchema()                    
+                    
+
+```
+
+
+
+We will creeate a new categorical feature OP_CARRIER which will display the complete carrier name.
+
+```{python}
+
+flight_5.groupBy('OP_CARRIER').count().orderBy('count', ascending=False).show(truncate=False)
+
+
+
+```
+
+
+```{python}
+
+flight_5 = flight_5.withColumn("CarrierName", when(flight_5.OP_CARRIER == 'WN','Southwest Airlines')
+                                             .when(flight_5.OP_CARRIER == 'DL','Delta Airlines')
+                                             .when(flight_5.OP_CARRIER == 'AA','American Airlines')
+                                             .when(flight_5.OP_CARRIER == 'OO','SkyWest Airlines')
+                                             .when(flight_5.OP_CARRIER == 'UA','United Airlines')
+                                             .when(flight_5.OP_CARRIER == 'EV','Atlantic Southeast Airlines ')
+                                             .when(flight_5.OP_CARRIER == 'MQ','Envoy Air')
+                                            .when(flight_5.OP_CARRIER == 'B6','JetBlue Airways')
+                                            .when(flight_5.OP_CARRIER == 'AS','Alaska Airlines')
+                                            .when(flight_5.OP_CARRIER == '9E','Endeavor Air')
+                                            .when(flight_5.OP_CARRIER == 'YV','Mesa Airline')
+                                            .when(flight_5.OP_CARRIER == 'F9','Frontier Airlines')
+                                            .when(flight_5.OP_CARRIER == 'HA','Hawaiian Airlines')
+                                            .when(flight_5.OP_CARRIER == 'NK','Spirit Airlines')
+                                            .when(flight_5.OP_CARRIER == 'OH','PSA Airlines')
+                                            .when(flight_5.OP_CARRIER == 'VX','Virgin America')
+                                            .when(flight_5.OP_CARRIER == 'US','US Airways')
+                                            .when(flight_5.OP_CARRIER == 'FL','AirTran Airways')
+                                            .when(flight_5.OP_CARRIER == 'XE','ExpressJet Airlines')
+                                            .otherwise('Continental Airlines'))
+
+
+```
+
+
+
+
+```{python}
+
+
+flight_5.groupBy('CarrierName').count().orderBy('count', ascending=False).show(truncate=False)
 
 
 
@@ -626,5 +710,232 @@ We will now join the flights data frame with the sql query result data frame. Th
 
 
 
+```{python}
 
 
+light_6=flight_5.drop('FL_DATE','OP_CARRIER_FL_NUM','CRS_DEP_TIME','DEP_TIME','WHEELS_OFF','WHEELS_ON','CRS_ARR_TIME','ARR_TIME',
+                       'AIR_TIME','DISTANCE')
+
+
+
+```
+
+
+
+```{python}
+
+
+flight_6.printSchema()
+
+
+```
+
+
+
+The new features Month, DayOfMonth,DayofWeek,and Year along with CANCELLED AND DIVERTED are integer data types that are better representative as categorical data types. Thus, we will transform these fesatures to string dtypes.
+
+
+
+
+
+
+```{python}
+
+flight_7 = flight_6.withColumn("Month",col("Month").cast(StringType())) \
+            .withColumn('DayOfMonth',col('DayOfMonth').cast(StringType())) \
+            .withColumn('DayOfWeek',col('DayOfWeek').cast(StringType())) \
+            .withColumn("CANCELLED",col("CANCELLED").cast(StringType())) \
+            .withColumn("DIVERTED",col("DIVERTED").cast(StringType())) \
+            .withColumn('Year',col('Year').cast(StringType())) 
+
+
+
+```
+
+
+
+```{python}
+
+
+
+flight_7.printSchema()
+
+```
+
+
+
+```{python}
+
+
+flight_7.select(flight_7.columns[17]).show()
+
+
+```
+
+
+
+
+From the output above we find that there is an unnamed column with only null values. This column will be dropped.
+
+
+
+```{python}
+
+flight_7=flight_7.drop(flight_7.columns[17])
+
+flight_7.printSchema()
+
+
+```
+
+
+
+The newly created target feature will be checked for null values.
+
+
+
+
+```{python}
+
+flight_7.filter('ArrDel15 IS NULL').count()
+
+
+```
+
+
+
+
+```{python}
+
+
+flight_7.groupBy('Cancelled').count().show()
+flight_7.groupBy('Diverted').count().show()
+
+
+```
+
+
+
+
+
+```{python}
+
+
+
+Cancelled and Diverted both yes (1) observations meaning that these flights never departed or were diverted to another airport and thus could not meet the CRS scheduled time. These values can create null or false values in other features.
+
+
+```
+
+
+
+```{python}
+
+
+flight_7.select('ARR_DELAY','ArrDel15', 'Cancelled').show()
+
+
+```
+
+
+
+Though the target feature ArrDel15 has no null value the feature ARR_DEL which it was created from does have null values. These null values correspond to the Cancelled level of yes (1). Since Cancelled along with Diverted are not being used classification predictions, both will be dropped.
+
+
+
+
+
+
+
+
+Null values will be checked on the entire data frame.
+
+
+
+
+```{python}
+
+#missing values check
+from pyspark.sql.functions import count, when, isnan, col
+
+
+def missing_calculation(df, miss_percentage=0.80):
+    
+    #checks for both NaN and null values
+    missing = df.select(*[count(when(isnan(c) | col(c).isNull(), c)).alias(c) for c in df.columns])
+    length_df = df.count()
+    ## convert to pandas for efficient calculations
+    final_missing_df = missing.toPandas().transpose()
+    final_missing_df.reset_index(inplace=True) 
+    final_missing_df.rename(columns={0:'missing_count'}, inplace=True) 
+    final_missing_df['missing_percentage'] = final_missing_df['missing_count']/length_df
+    
+    #select variables with cardinality of 1
+    vars_selected = final_missing_df['index'][final_missing_df['missing_percentage'] >= miss_percentage] 
+    
+    return final_missing_df
+
+
+
+```
+
+
+
+```{python}
+
+
+
+missing_df = missing_calculation(flight_7)
+
+
+```
+
+
+
+For the featues CARRIER_DELAY, WEATHER_DELAY, NAS_DELAY, SECURITY_DELAY, and LATE_AIRCRAFT_DELAY, null or missing values will be replaced with zero.
+
+```{python}
+
+
+flight_8=flight_7.fillna(value=0,subset=["CARRIER_DELAY", 'WEATHER_DELAY', 'NAS_DELAY', 
+                                         'SECURITY_DELAY', 'LATE_AIRCRAFT_DELAY'])
+
+
+```
+
+
+
+
+```{python}
+
+flight_8=flight_8.drop('CANCELLED','DIVERTED','CANCELLATION_CODE','CRS_ELAPSED_TIME','ACTUAL_ELAPSED_TIME')
+
+
+
+```
+
+
+
+
+```{python}
+
+
+flight_9=flight_8.dropna()
+
+```
+
+
+
+
+```{python}
+
+
+missing_df2=missing_df = missing_calculation(flight_8)
+
+
+```
+
+
+
+
+# Data Exploration
